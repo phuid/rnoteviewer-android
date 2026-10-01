@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import com.caverock.androidsvg.SVG
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import java.io.InputStream
@@ -178,7 +179,7 @@ object RnoteParser {
                 "textstroke"   -> parseTextstroke(reader)
                 "bitmapimage"  -> parseBitmapimage(reader)
                 "shapestroke"  -> parseShapestroke(reader)
-                "vectorimage"  -> { reader.skipValue(); null }
+                "vectorimage"  -> parseVectorimage(reader)
                 else           -> { reader.skipValue(); null }
             }
         }
@@ -579,6 +580,107 @@ object RnoteParser {
             bmp.setPixels(pixels, 0, w, 0, 0, w, h)
             bmp
         } catch (_: Exception) { null }
+    }
+
+    // ── Vectorimage ───────────────────────────
+    private fun parseVectorimage(reader: JsonReader): VectorElement? {
+        var svgData: String? = null
+        var intrinsicW = 0f
+        var intrinsicH = 0f
+        var opacity = 1f
+
+        var tx = 0f; var ty = 0f
+        var m00 = 1f; var m10 = 0f; var m01 = 0f; var m11 = 1f
+        var halfW = 0f; var halfH = 0f
+
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "svg_data" -> svgData = reader.nextString()
+                "intrinsic_size" -> {
+                    reader.beginArray()
+                    if (reader.hasNext()) intrinsicW = reader.nextDouble().toFloat()
+                    if (reader.hasNext()) intrinsicH = reader.nextDouble().toFloat()
+                    while (reader.hasNext()) reader.skipValue()
+                    reader.endArray()
+                }
+                "rectangle" -> {
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        when (reader.nextName()) {
+                            "transform" -> {
+                                reader.beginObject()
+                                while (reader.hasNext()) {
+                                    when (reader.nextName()) {
+                                        "affine" -> {
+                                            reader.beginArray()
+                                            val v = ArrayList<Float>(9)
+                                            while (reader.hasNext()) v.add(reader.nextDouble().toFloat())
+                                            reader.endArray()
+                                            if (v.size >= 8) {
+                                                m00 = v[0]; m10 = v[1]
+                                                m01 = v[3]; m11 = v[4]
+                                                tx  = v[6]; ty  = v[7]
+                                            }
+                                        }
+                                        else -> reader.skipValue()
+                                    }
+                                }
+                                reader.endObject()
+                            }
+                            "cuboid" -> {
+                                reader.beginObject()
+                                while (reader.hasNext()) {
+                                    when (reader.nextName()) {
+                                        "half_extents" -> {
+                                            reader.beginArray()
+                                            halfW = reader.nextDouble().toFloat()
+                                            halfH = reader.nextDouble().toFloat()
+                                            reader.endArray()
+                                        }
+                                        else -> reader.skipValue()
+                                    }
+                                }
+                                reader.endObject()
+                            }
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                }
+                "opacity" -> opacity = reader.nextDouble().toFloat()
+                else -> reader.skipValue()
+            }
+        }
+        reader.endObject()
+
+        val data = svgData ?: return null
+
+        val parsedSvg: SVG? = try {
+            SVG.getFromString(data)
+        } catch (e: Exception) {
+            android.util.Log.e("RnoteParser", "VECTOR SVG parse failed: $e")
+            null
+        }
+
+        fun wx(lx: Float, ly: Float) = m00 * lx + m01 * ly + tx
+        fun wy(lx: Float, ly: Float) = m10 * lx + m11 * ly + ty
+        val wxs = floatArrayOf(wx(-halfW, -halfH), wx(halfW, -halfH), wx(halfW, halfH), wx(-halfW, halfH))
+        val wys = floatArrayOf(wy(-halfW, -halfH), wy(halfW, -halfH), wy(halfW, halfH), wy(-halfW, halfH))
+
+        android.util.Log.d("RnoteParser", "VECTOR PARSED: tx=$tx ty=$ty halfW=$halfW halfH=$halfH intrinsicW=$intrinsicW intrinsicH=$intrinsicH")
+
+        return VectorElement(
+            svgData = data,
+            svg = parsedSvg,
+            opacity = opacity,
+            halfW = halfW, halfH = halfH,
+            intrinsicW = intrinsicW, intrinsicH = intrinsicH,
+            m00 = m00, m10 = m10, m01 = m01, m11 = m11,
+            tx = tx, ty = ty,
+            minX = wxs.min(), minY = wys.min(),
+            maxX = wxs.max(), maxY = wys.max()
+        )
     }
 
     // ── Chrono components ─────────────────────

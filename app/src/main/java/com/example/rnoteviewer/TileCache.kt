@@ -11,6 +11,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.LruCache
+import com.caverock.androidsvg.SVG
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -110,6 +111,7 @@ class TileCache(
                 is StrokeElement -> drawStroke(canvas, el, topDu, rs, strokePaint, path)
                 is TextElement   -> drawText(canvas, el, topDu, rs)
                 is BitmapElement -> drawImage(canvas, el, topDu, rs)
+                is VectorElement -> drawVectorImage(canvas, el, topDu, rs)
                 is ShapeElement  -> drawShape(canvas, el, topDu, rs, path)
             }
         }
@@ -211,6 +213,57 @@ class TileCache(
         android.util.Log.d("TileCache", "DRAW MATRIX: a=$a b=$b c=$c d=$d e=$e2 f=$f")
         // drawBitmap(bitmap, matrix, paint): matrix maps bitmap pixels to canvas pixels
         canvas.drawBitmap(el.bitmap, mat, paint)
+    }
+
+    // ── Vector / SVG image ────────────────────
+    private fun drawVectorImage(canvas: Canvas, el: VectorElement, topDu: Float, rs: Float) {
+        val svg = el.svg ?: try {
+            SVG.getFromString(el.svgData)
+        } catch (_: Exception) {
+            null
+        } ?: return
+
+        // Determine SVG intrinsic size sw, sh
+        var sw = svg.documentWidth
+        var sh = svg.documentHeight
+
+        if (sw <= 0f || sh <= 0f) {
+            val viewBox = svg.documentViewBox
+            if (viewBox != null && viewBox.width() > 0f && viewBox.height() > 0f) {
+                sw = viewBox.width()
+                sh = viewBox.height()
+            }
+        }
+        if (sw <= 0f || sh <= 0f) {
+            sw = if (el.intrinsicW > 0f) el.intrinsicW else 2f * el.halfW
+            sh = if (el.intrinsicH > 0f) el.intrinsicH else 2f * el.halfH
+        }
+
+        // Pixel -> local scaling factors
+        val scaleX = 2f * el.halfW / sw
+        val scaleY = 2f * el.halfH / sh
+
+        // Matrix elements mapping SVG coordinates (sx, sy) to canvas pixels
+        val a  = el.m00 * scaleX * rs
+        val b  = el.m01 * scaleY * rs
+        val c  = (el.tx  - el.m00 * el.halfW - el.m01 * el.halfH) * rs
+        val d  = el.m10 * scaleX * rs
+        val e2 = el.m11 * scaleY * rs
+        val f  = (el.ty  - el.m10 * el.halfW - el.m11 * el.halfH - topDu) * rs
+
+        val mat = android.graphics.Matrix()
+        mat.setValues(floatArrayOf(a, b, c, d, e2, f, 0f, 0f, 1f))
+
+        canvas.save()
+        canvas.concat(mat)
+
+        try {
+            svg.renderToCanvas(canvas)
+        } catch (e: Exception) {
+            android.util.Log.e("TileCache", "DRAW VECTOR SVG failed: $e")
+        } finally {
+            canvas.restore()
+        }
     }
 
     // ── Background pattern ────────────────────

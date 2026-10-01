@@ -31,6 +31,9 @@ android {
     buildFeatures {
         viewBinding true
     }
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -47,4 +50,8 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     // viewModels() delegate
     implementation 'androidx.activity:activity-ktx:1.8.2'
+    // SVG rendering
+    implementation 'com.caverock:androidsvg-aar:1.4'
+
+    testImplementation 'junit:junit:4.13.2'
 }

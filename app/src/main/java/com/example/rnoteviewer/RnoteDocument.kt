@@ -2,6 +2,7 @@ package com.example.rnoteviewer
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import com.caverock.androidsvg.SVG
 
 data class RnoteColor(val r: Float, val g: Float, val b: Float, val a: Float) {
     fun toAndroidColor(): Int = Color.argb(
@@ -58,6 +59,20 @@ data class BitmapElement(
     val halfW: Float, val halfH: Float,
     // Full affine 2×2 + translation from the rectangle's transform
     // Column-major order from the JSON [m00, m10, m01, m11, tx, ty]
+    val m00: Float = 1f, val m10: Float = 0f,
+    val m01: Float = 0f, val m11: Float = 1f,
+    val tx: Float = 0f,  val ty: Float = 0f,
+    override val minX: Float, override val minY: Float,
+    override val maxX: Float, override val maxY: Float
+) : CanvasElement()
+
+data class VectorElement(
+    val svgData: String,
+    val svg: SVG? = null,
+    val opacity: Float = 1f,
+    /** Half-extents in local (pre-transform) space */
+    val halfW: Float, val halfH: Float,
+    val intrinsicW: Float = 0f, val intrinsicH: Float = 0f,
     val m00: Float = 1f, val m10: Float = 0f,
     val m01: Float = 0f, val m11: Float = 1f,
     val tx: Float = 0f,  val ty: Float = 0f,
