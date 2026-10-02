@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import com.caverock.androidsvg.SVG
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken

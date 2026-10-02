@@ -31,6 +31,122 @@
             android:visibility="gone"
             android:background="#E0E0E0" />
 
+        <!-- Pannello di ricerca -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/searchContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:layout_margin="8dp"
+            android:visibility="gone"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="6dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="8dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_marginStart="4dp"
+                        android:src="@drawable/ic_search"
+                        app:tint="?attr/colorOnSurface"
+                        android:contentDescription="@null" />
+
+                    <EditText
+                        android:id="@+id/etSearchQuery"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@null"
+                        android:hint="@string/search_hint"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        android:paddingVertical="8dp"
+                        android:textSize="15sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleRegex"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="42dp"
+                        android:layout_height="36dp"
+                        android:layout_marginEnd="4dp"
+                        android:padding="0dp"
+                        android:text="@string/regex_label"
+                        android:textSize="13sp"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleCase"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="42dp"
+                        android:layout_height="36dp"
+                        android:layout_marginEnd="4dp"
+                        android:padding="0dp"
+                        android:text="@string/case_sensitive_label"
+                        android:textSize="13sp"
+                        app:strokeWidth="1dp" />
+
+                    <ImageButton
+                        android:id="@+id/btnCloseSearch"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/search_close"
+                        android:src="@drawable/ic_close"
+                        app:tint="?attr/colorOnSurface" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/searchControlsRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvSearchCount"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/no_results"
+                        android:textAppearance="?attr/textAppearanceCaption" />
+
+                    <ImageButton
+                        android:id="@+id/btnSearchPrev"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/search_prev"
+                        android:src="@drawable/ic_arrow_up"
+                        app:tint="?attr/colorOnSurface" />
+
+                    <ImageButton
+                        android:id="@+id/btnSearchNext"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/search_next"
+                        android:src="@drawable/ic_arrow_down"
+                        app:tint="?attr/colorOnSurface" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Barra di scorrimento verticale personalizzata (destra) -->
         <FrameLayout
             android:id="@+id/scrollbarContainer"
@@ -45,6 +161,12 @@
                 android:layout_height="match_parent"
                 android:layout_gravity="center_horizontal"
                 android:background="#30000000" />
+
+            <!-- Minimap per i risultati della ricerca -->
+            <com.example.rnoteviewer.SearchMinimapView
+                android:id="@+id/searchMinimapView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
 
             <!-- Thumb: posizionato via codice -->
             <View

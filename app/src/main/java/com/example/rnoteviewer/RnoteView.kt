@@ -151,6 +151,64 @@ class RnoteView @JvmOverloads constructor(
     fun setScrollListener(l: (Float, Int, Int) -> Unit) { scrollListener = l }
     private var scrollListener: ((Float, Int, Int) -> Unit)? = null
 
+    // ──────────────────────────────────────────
+    //  Search Highlights API
+    // ──────────────────────────────────────────
+
+    private var searchResults: List<SearchResult> = emptyList()
+    private var activeSearchIndex: Int = -1
+    private val highlightTempRect = RectF()
+    private val pageRect = RectF()
+
+    private val highlightFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x88FFEB3B.toInt() // Semi-transparent Yellow
+        style = Paint.Style.FILL
+    }
+    private val highlightBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFC107.toInt() // Amber Border
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+    }
+
+    private val activeHighlightFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xB3FF9800.toInt() // Semi-transparent Orange
+        style = Paint.Style.FILL
+    }
+    private val activeHighlightBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFF5722.toInt() // Deep Orange Border
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+    }
+
+    fun setSearchResults(results: List<SearchResult>, activeIndex: Int = 0) {
+        searchResults = results
+        activeSearchIndex = if (results.isNotEmpty()) activeIndex.coerceIn(0, results.lastIndex) else -1
+        invalidate()
+        if (activeSearchIndex >= 0) {
+            scrollToSearchResult(activeSearchIndex)
+        }
+    }
+
+    fun setActiveSearchResult(index: Int) {
+        if (searchResults.isEmpty()) return
+        activeSearchIndex = index.coerceIn(0, searchResults.lastIndex)
+        invalidate()
+        scrollToSearchResult(activeSearchIndex)
+    }
+
+    fun clearSearchResults() {
+        searchResults = emptyList()
+        activeSearchIndex = -1
+        invalidate()
+    }
+
+    fun scrollToSearchResult(index: Int) {
+        val result = searchResults.getOrNull(index) ?: return
+        val vp = viewportInDocCoords()
+        val targetY = result.docRect.centerY() - (vp.height() / 2f)
+        scrollToDocY(targetY)
+    }
+
     private fun notifyScroll() {
         val doc = document ?: return
         val total = (doc.totalHeight / doc.pageHeight).toInt().coerceAtLeast(1)
@@ -246,7 +304,7 @@ class RnoteView @JvmOverloads constructor(
         canvas.save()
         canvas.concat(matrix)
 
-        val pageRect = RectF(0f, 0f, doc.pageWidth, doc.totalHeight)
+        pageRect.set(0f, 0f, doc.pageWidth, doc.totalHeight)
 
         // Ombra della pagina
         canvas.drawRect(
@@ -276,6 +334,27 @@ class RnoteView @JvmOverloads constructor(
             } else {
                 canvas.drawRect(0f, topDu, doc.pageWidth, cache.tileBottomDu(ti), placeholderPaint)
                 ensureTileRendered(ti)
+            }
+        }
+
+        // Search highlights
+        if (searchResults.isNotEmpty()) {
+            val pad = 3f
+            for (i in searchResults.indices) {
+                val res = searchResults[i]
+                highlightTempRect.set(
+                    res.docRect.left - pad,
+                    res.docRect.top - pad,
+                    res.docRect.right + pad,
+                    res.docRect.bottom + pad
+                )
+                if (i == activeSearchIndex) {
+                    canvas.drawRoundRect(highlightTempRect, 4f, 4f, activeHighlightFillPaint)
+                    canvas.drawRoundRect(highlightTempRect, 4f, 4f, activeHighlightBorderPaint)
+                } else {
+                    canvas.drawRoundRect(highlightTempRect, 4f, 4f, highlightFillPaint)
+                    canvas.drawRoundRect(highlightTempRect, 4f, 4f, highlightBorderPaint)
+                }
             }
         }
 

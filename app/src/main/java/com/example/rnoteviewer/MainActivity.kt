@@ -6,15 +6,21 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
+import android.util.TypedValue
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.isVisible
 import com.example.rnoteviewer.databinding.ActivityMainBinding
 import com.google.android.material.textfield.TextInputEditText
 
@@ -23,7 +29,13 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
     private lateinit var binding: ActivityMainBinding
     private val viewModel: DocumentViewModel by viewModels()
 
+    private var currentDocument: RnoteDocument? = null
     private var totalPages = 1
+
+    private var searchResults: List<SearchResult> = emptyList()
+    private var currentMatchIndex: Int = -1
+    private var isRegexEnabled: Boolean = false
+    private var isCaseSensitiveEnabled: Boolean = false
 
     // Handler per nascondere l'indicatore pagina dopo 1.5 s
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -64,6 +76,7 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
 
         setupScrollbar()
         setupScrollListener()
+        setupSearchUI()
         observeViewModel()
         handleIncomingIntent(intent)
     }
@@ -81,8 +94,9 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        R.id.action_open  -> { openFileLauncher.launch(arrayOf("*/*")); true }
-        R.id.action_fonts -> {
+        R.id.action_open   -> { openFileLauncher.launch(arrayOf("*/*")); true }
+        R.id.action_search -> { showSearchUI(); true }
+        R.id.action_fonts  -> {
             FontsDialogFragment.newInstance().show(supportFragmentManager, FontsDialogFragment.TAG)
             true
         }
@@ -92,6 +106,128 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
     // ── FontPickerHost ────────────────────────
 
     override fun openFontPicker() { fontPickerLauncher.launch(arrayOf("*/*")) }
+
+    // ── Search UI ─────────────────────────────
+
+    private fun setupSearchUI() {
+        binding.etSearchQuery.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                performSearch()
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        binding.btnToggleRegex.setOnClickListener {
+            isRegexEnabled = !isRegexEnabled
+            updateToggleButtonsUI()
+            performSearch()
+        }
+
+        binding.btnToggleCase.setOnClickListener {
+            isCaseSensitiveEnabled = !isCaseSensitiveEnabled
+            updateToggleButtonsUI()
+            performSearch()
+        }
+
+        binding.btnSearchPrev.setOnClickListener {
+            if (searchResults.isNotEmpty()) {
+                currentMatchIndex = if (currentMatchIndex > 0) currentMatchIndex - 1 else searchResults.lastIndex
+                updateMatchSelection()
+            }
+        }
+
+        binding.btnSearchNext.setOnClickListener {
+            if (searchResults.isNotEmpty()) {
+                currentMatchIndex = if (currentMatchIndex < searchResults.lastIndex) currentMatchIndex + 1 else 0
+                updateMatchSelection()
+            }
+        }
+
+        binding.btnCloseSearch.setOnClickListener {
+            hideSearchUI()
+        }
+
+        updateToggleButtonsUI()
+    }
+
+    private fun updateToggleButtonsUI() {
+        val primaryColor = binding.toolbar.context.theme.let { theme ->
+            val typedValue = TypedValue()
+            if (theme.resolveAttribute(com.google.android.material.R.attr.colorPrimary, typedValue, true)) {
+                typedValue.data
+            } else 0xFF6200EE.toInt()
+        }
+        val inactiveColor = 0xFF888888.toInt()
+
+        binding.btnToggleRegex.setTextColor(if (isRegexEnabled) primaryColor else inactiveColor)
+        binding.btnToggleRegex.setStrokeColorResource(
+            if (isRegexEnabled) android.R.color.holo_blue_dark else android.R.color.darker_gray
+        )
+
+        binding.btnToggleCase.setTextColor(if (isCaseSensitiveEnabled) primaryColor else inactiveColor)
+        binding.btnToggleCase.setStrokeColorResource(
+            if (isCaseSensitiveEnabled) android.R.color.holo_blue_dark else android.R.color.darker_gray
+        )
+    }
+
+    private fun showSearchUI() {
+        binding.searchContainer.visibility = View.VISIBLE
+        binding.etSearchQuery.requestFocus()
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(binding.etSearchQuery, InputMethodManager.SHOW_IMPLICIT)
+        performSearch()
+    }
+
+    private fun hideSearchUI() {
+        binding.searchContainer.visibility = View.GONE
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.etSearchQuery.windowToken, 0)
+        searchResults = emptyList()
+        currentMatchIndex = -1
+        binding.rnoteView.clearSearchResults()
+        binding.searchMinimapView.clear()
+    }
+
+    private fun performSearch() {
+        val doc = currentDocument ?: return
+        val query = binding.etSearchQuery.text.toString()
+
+        if (query.isBlank()) {
+            searchResults = emptyList()
+            currentMatchIndex = -1
+            binding.tvSearchCount.text = ""
+            binding.rnoteView.clearSearchResults()
+            binding.searchMinimapView.clear()
+            return
+        }
+
+        val options = SearchOptions(
+            query = query,
+            isRegex = isRegexEnabled,
+            isCaseSensitive = isCaseSensitiveEnabled
+        )
+
+        searchResults = SearchEngine.search(doc, options)
+        currentMatchIndex = if (searchResults.isNotEmpty()) 0 else -1
+
+        if (searchResults.isEmpty()) {
+            binding.tvSearchCount.text = getString(R.string.no_results)
+            binding.rnoteView.clearSearchResults()
+            binding.searchMinimapView.clear()
+        } else {
+            binding.tvSearchCount.text = getString(R.string.search_count, currentMatchIndex + 1, searchResults.size)
+            binding.rnoteView.setSearchResults(searchResults, currentMatchIndex)
+            binding.searchMinimapView.setSearchResults(searchResults, currentMatchIndex, doc.totalHeight)
+        }
+    }
+
+    private fun updateMatchSelection() {
+        if (searchResults.isEmpty() || currentMatchIndex < 0) return
+        binding.tvSearchCount.text = getString(R.string.search_count, currentMatchIndex + 1, searchResults.size)
+        binding.rnoteView.setActiveSearchResult(currentMatchIndex)
+        binding.searchMinimapView.setActiveIndex(currentMatchIndex)
+    }
 
     // ── Scrollbar ─────────────────────────────
 
@@ -134,7 +270,7 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
 
     private fun showJumpDialog() {
         val input = TextInputEditText(this).apply {
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            inputType = InputType.TYPE_CLASS_NUMBER
             hint = getString(R.string.jump_hint, totalPages)
         }
         AlertDialog.Builder(this)
@@ -176,10 +312,15 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
                     binding.scrollbarContainer.visibility = View.VISIBLE
                     binding.fabJumpPage.visibility      = View.VISIBLE
 
+                    currentDocument = state.doc
                     totalPages = (state.doc.totalHeight / state.doc.pageHeight)
                         .toInt().coerceAtLeast(1)
                     supportActionBar?.title = getString(R.string.title_pages, totalPages)
                     binding.rnoteView.setDocument(state.doc, state.tree)
+
+                    if (binding.searchContainer.isVisible) {
+                        performSearch()
+                    }
                 }
                 is LoadState.Error -> {
                     binding.progressBar.visibility = View.GONE
@@ -193,6 +334,8 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
     }
 
     private fun showWelcome() {
+        currentDocument                     = null
+        hideSearchUI()
         binding.welcome.visibility          = View.VISIBLE
         binding.rnoteView.visibility        = View.GONE
         binding.progressBar.visibility      = View.GONE

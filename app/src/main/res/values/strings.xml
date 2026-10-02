@@ -2,7 +2,18 @@
 <resources>
     <string name="app_name">Rnote Viewer</string>
     <string name="action_open">Apri file</string>
+    <string name="action_search">Cerca nel file</string>
     <string name="action_fonts">Gestisci font…</string>
+    <string name="search_hint">Cerca nel documento…</string>
+    <string name="regex_label">.*</string>
+    <string name="regex_tooltip">Espressione regolare (Regex)</string>
+    <string name="case_sensitive_label">Aa</string>
+    <string name="case_sensitive_tooltip">Maiuscole/minuscole</string>
+    <string name="no_results">0 risultati</string>
+    <string name="search_count">%1$d di %2$d</string>
+    <string name="search_prev">Risultato precedente</string>
+    <string name="search_next">Risultato successivo</string>
+    <string name="search_close">Chiudi ricerca</string>
     <string name="welcome_title">Nessun file aperto</string>
     <string name="welcome_subtitle">Apri un file .rnote per visualizzarlo</string>
     <string name="btn_open_file">Apri file .rnote</string>
