@@ -2,6 +2,7 @@ package com.example.rnoteviewer
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.RectF
 import com.caverock.androidsvg.SVG
 
 data class RnoteColor(val r: Float, val g: Float, val b: Float, val a: Float) {
@@ -149,4 +150,20 @@ data class RnoteDocument(
     val pageWidth: Float, val pageHeight: Float, val totalHeight: Float,
     val background: BackgroundConfig,
     val elements: List<CanvasElement>
-)
+) {
+    val contentBounds: RectF by lazy {
+        var minX = 0f
+        var minY = 0f
+        var maxX = pageWidth
+        var maxY = totalHeight.coerceAtLeast(pageHeight)
+
+        for (el in elements) {
+            if (el.minX < minX) minX = el.minX
+            if (el.minY < minY) minY = el.minY
+            if (el.maxX > maxX) maxX = el.maxX
+            if (el.maxY > maxY) maxY = el.maxY
+        }
+
+        RectF(minX, minY, maxX, maxY)
+    }
+}

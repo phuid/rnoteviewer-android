@@ -7,6 +7,11 @@
         android:icon="@drawable/ic_folder_open"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/action_origin_page"
+        android:title="@string/action_origin_page"
+        android:icon="@drawable/ic_origin_page"
+        app:showAsAction="ifRoom" />
+    <item
         android:id="@+id/action_search"
         android:title="@string/action_search"
         android:icon="@drawable/ic_search"

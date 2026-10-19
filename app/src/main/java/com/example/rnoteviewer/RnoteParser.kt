@@ -78,10 +78,12 @@ object RnoteParser {
         reader.endObject()
 
         val elements = buildOrderedElements(rawElements, chronoOrder)
+        val maxElementY = elements.maxOfOrNull { it.maxY } ?: format.height
+        val effectiveTotalHeight = maxOf(totalHeight, format.height, maxElementY)
         return RnoteDocument(
             pageWidth   = format.width,
             pageHeight  = format.height,
-            totalHeight = totalHeight,
+            totalHeight = effectiveTotalHeight,
             background  = BackgroundConfig(bg.color, bg.pattern, bg.patternW, bg.patternH, bg.patternColor),
             elements    = elements
         )

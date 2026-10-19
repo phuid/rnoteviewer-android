@@ -4,83 +4,71 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.Log
 import android.util.LruCache
 import com.caverock.androidsvg.SVG
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+data class TileKey(val x: Int, val y: Int)
+
 /**
- * LRU cache of bitmap tiles.
+ * LRU cache of 2D bitmap tiles for infinite canvas rendering.
  *
- * Each tile is a horizontal band of the document of [tileHeightDu] document-units.
- *
- * ### Anti-flickering: capped scale
- * The effective rendering scale is capped to [MAX_TILE_WIDTH_PX] pixels in width.
- * Without this cap, at high zoom levels a single tile can exceed the size of the
- * entire cache (48 MB), be immediately evicted, and continuously re-render,
- * causing constant GC and flickering.
- *
- * The public field [scale] stores the scale requested by the viewport (used for
- * computing invScale during drawing); [renderScale] is the actual scale used
- * for the bitmap (never exceeding the cap).
+ * Each tile is a [tileSizeDu] × [tileSizeDu] square in document units.
  */
 class TileCache(
     private val doc: RnoteDocument,
     private val rtree: RTree,
     private val context: Context,
-    val tileHeightDu: Float = 512f,
-    /** Scala viewport: zoom × density. Usata per invScale in onDraw. */
+    val tileSizeDu: Float = 512f,
+    /** Viewport scale: zoom × density. Used for invScale during drawing. */
     var scale: Float = 1f,
     maxMemoryBytes: Int = 48 * 1024 * 1024
 ) {
     companion object {
-        /** Larghezza massima in px di un tile bitmap per evitare OOM e GC thrashing. */
+        /** Maximum tile bitmap width/height in pixels to avoid OOM and GC thrashing. */
         private const val MAX_TILE_WIDTH_PX = 1536f
     }
 
-    /** Scala effettiva usata per rendere i bitmap (≤ scale). */
+    /** Effective rendering scale used for bitmaps (≤ scale). */
     val renderScale: Float
-        get() = minOf(scale, MAX_TILE_WIDTH_PX / doc.pageWidth.coerceAtLeast(1f))
-
-    // ── Tile index ────────────────────────────
-    val tileCount: Int
-        get() = Math.ceil((doc.totalHeight / tileHeightDu).toDouble()).toInt().coerceAtLeast(1)
-
-    fun tileTopDu(i: Int)    = i * tileHeightDu
-    fun tileBottomDu(i: Int) = ((i + 1) * tileHeightDu).coerceAtMost(doc.totalHeight)
+        get() = minOf(scale, MAX_TILE_WIDTH_PX / tileSizeDu)
 
     // ── LRU cache ─────────────────────────────
-    private val lru = object : LruCache<Int, Bitmap>(maxMemoryBytes) {
-        override fun sizeOf(key: Int, value: Bitmap) = value.byteCount
-        override fun entryRemoved(evicted: Boolean, key: Int, old: Bitmap, new: Bitmap?) {
+    private val lru = object : LruCache<TileKey, Bitmap>(maxMemoryBytes) {
+        override fun sizeOf(key: TileKey, value: Bitmap) = value.byteCount
+        override fun entryRemoved(evicted: Boolean, key: TileKey, old: Bitmap, new: Bitmap?) {
             if (evicted) old.recycle()
         }
     }
 
-    private val inFlight = mutableSetOf<Int>()
-    private var _onTileReady: ((Int) -> Unit) = {}
-    fun setOnTileReady(cb: (Int) -> Unit) { _onTileReady = cb }
+    private val inFlight = mutableSetOf<TileKey>()
+    private var _onTileReady: ((TileKey) -> Unit) = {}
+    fun setOnTileReady(cb: (TileKey) -> Unit) { _onTileReady = cb }
 
-    fun get(tileIndex: Int): Bitmap? = lru.get(tileIndex)
+    fun get(key: TileKey): Bitmap? = lru.get(key)
 
-    fun renderSync(tileIndex: Int) {
+    fun renderSync(key: TileKey) {
         synchronized(inFlight) {
-            if (tileIndex in inFlight) return
-            inFlight.add(tileIndex)
+            if (key in inFlight) return
+            inFlight.add(key)
         }
         try {
-            lru.put(tileIndex, renderTile(tileIndex))
+            lru.put(key, renderTile(key))
         } finally {
-            synchronized(inFlight) { inFlight.remove(tileIndex) }
+            synchronized(inFlight) { inFlight.remove(key) }
         }
-        _onTileReady(tileIndex)
+        _onTileReady(key)
     }
 
     fun invalidateAll() {
@@ -89,30 +77,33 @@ class TileCache(
     }
 
     // ── Rendering ─────────────────────────────
-    private fun renderTile(tileIndex: Int): Bitmap {
-        val rs       = renderScale                          // capped scale
-        val topDu    = tileTopDu(tileIndex)
-        val bottomDu = tileBottomDu(tileIndex)
-        val widthPx  = (doc.pageWidth      * rs).toInt().coerceAtLeast(1)
-        val heightPx = ((bottomDu - topDu) * rs).toInt().coerceAtLeast(1)
+    private fun renderTile(key: TileKey): Bitmap {
+        val rs       = renderScale
+        val leftDu   = key.x * tileSizeDu
+        val topDu    = key.y * tileSizeDu
+        val rightDu  = leftDu + tileSizeDu
+        val bottomDu = topDu + tileSizeDu
+
+        val widthPx  = (tileSizeDu * rs).toInt().coerceAtLeast(1)
+        val heightPx = (tileSizeDu * rs).toInt().coerceAtLeast(1)
 
         val bmp    = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
 
         canvas.drawColor(doc.background.color.toAndroidColor())
-        drawPattern(canvas, topDu, widthPx, heightPx, rs)
+        drawPattern(canvas, leftDu, topDu, widthPx, heightPx, rs)
 
-        val visible     = rtree.query(0f, topDu, doc.pageWidth, bottomDu)
+        val visible     = rtree.query(leftDu, topDu, rightDu, bottomDu)
         val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
         val path        = Path()
 
         for (el in visible) {
             when (el) {
-                is StrokeElement -> drawStroke(canvas, el, topDu, rs, strokePaint, path)
-                is TextElement   -> drawText(canvas, el, topDu, rs)
-                is BitmapElement -> drawImage(canvas, el, topDu, rs)
-                is VectorElement -> drawVectorImage(canvas, el, topDu, rs)
-                is ShapeElement  -> drawShape(canvas, el, topDu, rs, path)
+                is StrokeElement -> drawStroke(canvas, el, leftDu, topDu, rs, strokePaint, path)
+                is TextElement   -> drawText(canvas, el, leftDu, topDu, rs)
+                is BitmapElement -> drawImage(canvas, el, leftDu, topDu, rs)
+                is VectorElement -> drawVectorImage(canvas, el, leftDu, topDu, rs)
+                is ShapeElement  -> drawShape(canvas, el, leftDu, topDu, rs, path)
             }
         }
         return bmp
@@ -120,7 +111,7 @@ class TileCache(
 
     // ── Stroke ────────────────────────────────
     private fun drawStroke(
-        canvas: Canvas, el: StrokeElement, topDu: Float, rs: Float,
+        canvas: Canvas, el: StrokeElement, leftDu: Float, topDu: Float, rs: Float,
         paint: Paint, path: Path
     ) {
         if (el.points.size < 2) return
@@ -129,16 +120,16 @@ class TileCache(
         paint.strokeWidth = el.strokeWidth * rs
         paint.alpha       = if (el.isHighlighter) 80 else Color.alpha(argb)
         path.reset()
-        path.moveTo(el.points[0].x * rs, (el.points[0].y - topDu) * rs)
+        path.moveTo((el.points[0].x - leftDu) * rs, (el.points[0].y - topDu) * rs)
         for (k in 1 until el.points.size) {
             val pt = el.points[k]
-            path.lineTo(pt.x * rs, (pt.y - topDu) * rs)
+            path.lineTo((pt.x - leftDu) * rs, (pt.y - topDu) * rs)
         }
         canvas.drawPath(path, paint)
     }
 
     // ── Text ──────────────────────────────────
-    private fun drawText(canvas: Canvas, el: TextElement, topDu: Float, rs: Float) {
+    private fun drawText(canvas: Canvas, el: TextElement, leftDu: Float, topDu: Float, rs: Float) {
         val typeface = FontManager.resolve(el.fontFamily, el.fontStyle)
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color    = el.color.toAndroidColor()
@@ -149,7 +140,7 @@ class TileCache(
                      else (doc.pageWidth * rs).toInt()
 
         canvas.save()
-        canvas.translate(el.x * rs, (el.y - topDu) * rs)
+        canvas.translate((el.x - leftDu) * rs, (el.y - topDu) * rs)
 
         @Suppress("DEPRECATION")
         val layout = StaticLayout(
@@ -161,69 +152,40 @@ class TileCache(
     }
 
     // ── Bitmap image ──────────────────────────
-    /**
-     * Draws a BitmapElement using the full affine transform stored on the element.
-     *
-     * The bitmap occupies local space [-halfW..halfW] × [-halfH..halfH].
-     * The affine maps local → world:
-     *   wx = m00*lx + m01*ly + tx
-     *   wy = m10*lx + m11*ly + ty
-     *
-     * We build a single Matrix that maps bitmap pixel (px, py) directly to
-     * tile canvas pixel (cx, cy) and pass it to drawBitmap().
-     *
-     *   lx = (px / pw) * 2*halfW - halfW   → pixel to local
-     *   ly = (py / ph) * 2*halfH - halfH
-     *
-     * Combined (px → canvas):
-     *   cx = (m00 * 2*halfW/pw) * px  +  (m01 * 2*halfH/ph) * py
-     *        + (tx - m00*halfW - m01*halfH)       ← all multiplied by rs
-     *   cy = same with m10, m11, ty, minus topDu before multiplying by rs
-     */
-    private fun drawImage(canvas: Canvas, el: BitmapElement, topDu: Float, rs: Float) {
+    private fun drawImage(canvas: Canvas, el: BitmapElement, leftDu: Float, topDu: Float, rs: Float) {
         if (el.bitmap.isRecycled) return
 
         val pw = el.bitmap.width.toFloat().coerceAtLeast(1f)
         val ph = el.bitmap.height.toFloat().coerceAtLeast(1f)
 
-        // Pixel → local scaling factors
         val sx = 2f * el.halfW / pw
         val sy = 2f * el.halfH / ph
 
-        // The 6 independent elements of the affine (in screen pixels)
         val a  = el.m00 * sx * rs
         val b  = el.m01 * sy * rs
-        val c  = (el.tx  - el.m00 * el.halfW - el.m01 * el.halfH) * rs
+        val c  = (el.tx  - el.m00 * el.halfW - el.m01 * el.halfH - leftDu) * rs
         val d  = el.m10 * sx * rs
         val e2 = el.m11 * sy * rs
         val f  = (el.ty  - el.m10 * el.halfW - el.m11 * el.halfH - topDu) * rs
 
-        // Android Matrix setValues order:
-        // [ MSCALE_X  MSKEW_X   MTRANS_X ]   →  screen_x = a*px + b*py + c
-        // [ MSKEW_Y   MSCALE_Y  MTRANS_Y ]   →  screen_y = d*px + e*py + f
-        // [ 0         0         1        ]
-        val mat = android.graphics.Matrix()
-        mat.setValues(floatArrayOf(a, b, c,  d, e2, f,  0f, 0f, 1f))
+        val mat = Matrix()
+        mat.setValues(floatArrayOf(a, b, c, d, e2, f, 0f, 0f, 1f))
 
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).apply {
             if (el.opacity < 1f) alpha = (el.opacity * 255f).toInt().coerceIn(0, 255)
         }
 
-        android.util.Log.d("TileCache", "DRAW BITMAP: bmp=${el.bitmap.width}x${el.bitmap.height} halfW=${el.halfW} halfH=${el.halfH} tx=${el.tx} ty=${el.ty} m00=${el.m00} rs=$rs topDu=$topDu")
-        android.util.Log.d("TileCache", "DRAW MATRIX: a=$a b=$b c=$c d=$d e=$e2 f=$f")
-        // drawBitmap(bitmap, matrix, paint): matrix maps bitmap pixels to canvas pixels
         canvas.drawBitmap(el.bitmap, mat, paint)
     }
 
     // ── Vector / SVG image ────────────────────
-    private fun drawVectorImage(canvas: Canvas, el: VectorElement, topDu: Float, rs: Float) {
+    private fun drawVectorImage(canvas: Canvas, el: VectorElement, leftDu: Float, topDu: Float, rs: Float) {
         val svg = el.svg ?: try {
             SVG.getFromString(el.svgData)
         } catch (_: Exception) {
             null
         } ?: return
 
-        // Determine SVG intrinsic size sw, sh
         var sw = svg.documentWidth
         var sh = svg.documentHeight
 
@@ -239,19 +201,17 @@ class TileCache(
             sh = if (el.intrinsicH > 0f) el.intrinsicH else 2f * el.halfH
         }
 
-        // Pixel -> local scaling factors
         val scaleX = 2f * el.halfW / sw
         val scaleY = 2f * el.halfH / sh
 
-        // Matrix elements mapping SVG coordinates (sx, sy) to canvas pixels
         val a  = el.m00 * scaleX * rs
         val b  = el.m01 * scaleY * rs
-        val c  = (el.tx  - el.m00 * el.halfW - el.m01 * el.halfH) * rs
+        val c  = (el.tx  - el.m00 * el.halfW - el.m01 * el.halfH - leftDu) * rs
         val d  = el.m10 * scaleX * rs
         val e2 = el.m11 * scaleY * rs
         val f  = (el.ty  - el.m10 * el.halfW - el.m11 * el.halfH - topDu) * rs
 
-        val mat = android.graphics.Matrix()
+        val mat = Matrix()
         mat.setValues(floatArrayOf(a, b, c, d, e2, f, 0f, 0f, 1f))
 
         canvas.save()
@@ -260,7 +220,7 @@ class TileCache(
         try {
             svg.renderToCanvas(canvas)
         } catch (e: Exception) {
-            android.util.Log.e("TileCache", "DRAW VECTOR SVG failed: $e")
+            Log.e("TileCache", "DRAW VECTOR SVG failed: $e")
         } finally {
             canvas.restore()
         }
@@ -268,7 +228,7 @@ class TileCache(
 
     // ── Background pattern ────────────────────
     private fun drawPattern(
-        canvas: Canvas, topDu: Float, widthPx: Int, heightPx: Int, rs: Float
+        canvas: Canvas, leftDu: Float, topDu: Float, widthPx: Int, heightPx: Int, rs: Float
     ) {
         val bg = doc.background
         if (bg.pattern == PatternType.BLANK) return
@@ -279,33 +239,54 @@ class TileCache(
         }
         val cellW   = bg.patternWidth  * rs
         val cellH   = bg.patternHeight * rs
-        val offsetY = (topDu * rs) % cellH
+
+        fun posMod(value: Float, step: Float): Float {
+            val m = value % step
+            return if (m < 0) m + step else m
+        }
+
+        val offsetX = posMod(leftDu * rs, cellW)
+        val offsetY = posMod(topDu * rs, cellH)
 
         when (bg.pattern) {
             PatternType.GRID -> {
-                var x = 0f
-                while (x <= widthPx) { canvas.drawLine(x, 0f, x, heightPx.toFloat(), paint); x += cellW }
-                var y = -offsetY
-                while (y <= heightPx) { canvas.drawLine(0f, y, widthPx.toFloat(), y, paint); y += cellH }
-            }
-            PatternType.RULED -> {
-                var y = -offsetY
-                while (y <= heightPx) { canvas.drawLine(0f, y, widthPx.toFloat(), y, paint); y += cellH }
-            }
-            PatternType.DOTS -> {
-                val dotP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = bg.patternColor.toAndroidColor(); style = Paint.Style.FILL
+                var x = -offsetX
+                while (x <= widthPx) {
+                    if (x >= 0) canvas.drawLine(x, 0f, x, heightPx.toFloat(), paint)
+                    x += cellW
                 }
                 var y = -offsetY
                 while (y <= heightPx) {
-                    var x = 0f
-                    while (x <= widthPx) { canvas.drawCircle(x, y, 1.5f, dotP); x += cellW }
+                    if (y >= 0) canvas.drawLine(0f, y, widthPx.toFloat(), y, paint)
+                    y += cellH
+                }
+            }
+            PatternType.RULED -> {
+                var y = -offsetY
+                while (y <= heightPx) {
+                    if (y >= 0) canvas.drawLine(0f, y, widthPx.toFloat(), y, paint)
+                    y += cellH
+                }
+            }
+            PatternType.DOTS -> {
+                val dotP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = bg.patternColor.toAndroidColor()
+                    style = Paint.Style.FILL
+                }
+                var y = -offsetY
+                while (y <= heightPx) {
+                    var x = -offsetX
+                    while (x <= widthPx) {
+                        if (x >= 0 && y >= 0) canvas.drawCircle(x, y, 1.5f, dotP)
+                        x += cellW
+                    }
                     y += cellH
                 }
             }
             else -> {}
         }
     }
+
     // ── Shape rendering ───────────────────────
 
     private fun applyShapeStyle(paint: Paint, style: ShapeStyle, rs: Float, filled: Boolean) {
@@ -319,7 +300,7 @@ class TileCache(
             paint.strokeJoin  = Paint.Join.ROUND
             paint.strokeCap   = Paint.Cap.ROUND
             if (style.lineDash) {
-                paint.pathEffect = android.graphics.DashPathEffect(
+                paint.pathEffect = DashPathEffect(
                     floatArrayOf(style.strokeWidth * rs * 4, style.strokeWidth * rs * 2), 0f)
             } else {
                 paint.pathEffect = null
@@ -328,7 +309,7 @@ class TileCache(
     }
 
     private fun drawShape(
-        canvas: Canvas, el: ShapeElement, topDu: Float, rs: Float, path: Path
+        canvas: Canvas, el: ShapeElement, leftDu: Float, topDu: Float, rs: Float, path: Path
     ) {
         val s = el.style
         val hasFill = s.fillColor.a > 0.01f
@@ -340,22 +321,20 @@ class TileCache(
         when (val geo = el.geometry) {
 
             is LineShape -> {
-                canvas.drawLine(geo.x0*rs, (geo.y0-topDu)*rs, geo.x1*rs, (geo.y1-topDu)*rs, strokePaint)
+                canvas.drawLine((geo.x0 - leftDu)*rs, (geo.y0 - topDu)*rs, (geo.x1 - leftDu)*rs, (geo.y1 - topDu)*rs, strokePaint)
             }
 
             is ArrowShape -> {
-                // Shaft
-                canvas.drawLine(geo.startX*rs, (geo.startY-topDu)*rs, geo.tipX*rs, (geo.tipY-topDu)*rs, strokePaint)
-                // Arrowhead
+                canvas.drawLine((geo.startX - leftDu)*rs, (geo.startY - topDu)*rs, (geo.tipX - leftDu)*rs, (geo.tipY - topDu)*rs, strokePaint)
                 val dx = geo.tipX - geo.startX
                 val dy = geo.tipY - geo.startY
-                val len = kotlin.math.sqrt((dx*dx+dy*dy).toDouble()).toFloat().coerceAtLeast(0.001f)
+                val len = sqrt((dx*dx+dy*dy).toDouble()).toFloat().coerceAtLeast(0.001f)
                 val ux = dx/len; val uy = dy/len
                 val headLen = (s.strokeWidth * 6f).coerceAtLeast(8f)
                 val headW   = headLen * 0.45f
-                val bx = (geo.tipX - ux*headLen)*rs
-                val by = ((geo.tipY - uy*headLen) - topDu)*rs
-                val tx2 = geo.tipX*rs; val ty2 = (geo.tipY-topDu)*rs
+                val bx = (geo.tipX - ux*headLen - leftDu)*rs
+                val by = (geo.tipY - uy*headLen - topDu)*rs
+                val tx2 = (geo.tipX - leftDu)*rs; val ty2 = (geo.tipY - topDu)*rs
                 path.reset()
                 path.moveTo(bx - uy*headW*rs, by + ux*headW*rs)
                 path.lineTo(tx2, ty2)
@@ -371,15 +350,13 @@ class TileCache(
             is RectShape -> {
                 path.reset()
                 val hw = geo.halfW*rs; val hh = geo.halfH*rs
-                val cx = geo.tx*rs;    val cy = (geo.ty-topDu)*rs
+                val cx = (geo.tx - leftDu)*rs; val cy = (geo.ty - topDu)*rs
                 if (geo.rotSin == 0f) {
-                    // Axis-aligned → fast drawRect
-                    val r = android.graphics.RectF(cx-hw, cy-hh, cx+hw, cy+hh)
+                    val r = RectF(cx-hw, cy-hh, cx+hw, cy+hh)
                     if (hasFill) { applyShapeStyle(fillPaint,s,rs,true); canvas.drawRect(r, fillPaint) }
                     canvas.drawRect(r, strokePaint)
                 } else {
                     val cos = geo.rotCos; val sin = geo.rotSin
-                    // Four corners in local space, rotated
                     fun corner(lx:Float,ly:Float): Pair<Float,Float> =
                         Pair(cx + lx*cos - ly*sin, cy + lx*sin + ly*cos)
                     val (ax,ay) = corner(-hw,-hh); val (bx,by) = corner(hw,-hh)
@@ -392,22 +369,20 @@ class TileCache(
 
             is EllipseShape -> {
                 val rx = geo.rx*rs; val ry = geo.ry*rs
-                val cx = geo.tx*rs; val cy = (geo.ty-topDu)*rs
+                val cx = (geo.tx - leftDu)*rs; val cy = (geo.ty - topDu)*rs
                 val isCircle = (geo.m10 == 0f && geo.m01 == 0f)
                 if (isCircle) {
-                    val oval = android.graphics.RectF(cx-rx, cy-ry, cx+rx, cy+ry)
+                    val oval = RectF(cx-rx, cy-ry, cx+rx, cy+ry)
                     if (hasFill) { applyShapeStyle(fillPaint,s,rs,true); canvas.drawOval(oval, fillPaint) }
                     canvas.drawOval(oval, strokePaint)
                 } else {
-                    // Rotated/skewed ellipse → approximate with path (72 segments)
                     path.reset()
                     val steps = 72
                     for (i in 0..steps) {
                         val angle = 2f * Math.PI.toFloat() * i / steps
-                        val ex = geo.rx * kotlin.math.cos(angle)
-                        val ey = geo.ry * kotlin.math.sin(angle)
-                        // Apply the 2x2 rotation part of the affine
-                        val wx = (geo.m00 * ex + geo.m01 * ey + geo.tx) * rs
+                        val ex = geo.rx * cos(angle)
+                        val ey = geo.ry * sin(angle)
+                        val wx = ((geo.m00 * ex + geo.m01 * ey + geo.tx) - leftDu) * rs
                         val wy = ((geo.m10 * ex + geo.m11 * ey + geo.ty) - topDu) * rs
                         if (i == 0) path.moveTo(wx,wy) else path.lineTo(wx,wy)
                     }
@@ -419,24 +394,24 @@ class TileCache(
 
             is QuadBezShape -> {
                 path.reset()
-                path.moveTo(geo.x0*rs, (geo.y0-topDu)*rs)
-                path.quadTo(geo.cpX*rs, (geo.cpY-topDu)*rs, geo.x1*rs, (geo.y1-topDu)*rs)
+                path.moveTo((geo.x0 - leftDu)*rs, (geo.y0 - topDu)*rs)
+                path.quadTo((geo.cpX - leftDu)*rs, (geo.cpY - topDu)*rs, (geo.x1 - leftDu)*rs, (geo.y1 - topDu)*rs)
                 canvas.drawPath(path, strokePaint)
             }
 
             is CubBezShape -> {
                 path.reset()
-                path.moveTo(geo.x0*rs, (geo.y0-topDu)*rs)
-                path.cubicTo(geo.cp1X*rs,(geo.cp1Y-topDu)*rs, geo.cp2X*rs,(geo.cp2Y-topDu)*rs, geo.x1*rs,(geo.y1-topDu)*rs)
+                path.moveTo((geo.x0 - leftDu)*rs, (geo.y0 - topDu)*rs)
+                path.cubicTo((geo.cp1X - leftDu)*rs, (geo.cp1Y - topDu)*rs, (geo.cp2X - leftDu)*rs, (geo.cp2Y - topDu)*rs, (geo.x1 - leftDu)*rs, (geo.y1 - topDu)*rs)
                 canvas.drawPath(path, strokePaint)
             }
 
             is PolygonShape -> {
                 if (geo.points.size < 2) return
                 path.reset()
-                path.moveTo(geo.points[0].first*rs, (geo.points[0].second-topDu)*rs)
+                path.moveTo((geo.points[0].first - leftDu)*rs, (geo.points[0].second - topDu)*rs)
                 for (i in 1 until geo.points.size)
-                    path.lineTo(geo.points[i].first*rs, (geo.points[i].second-topDu)*rs)
+                    path.lineTo((geo.points[i].first - leftDu)*rs, (geo.points[i].second - topDu)*rs)
                 path.close()
                 if (hasFill) { applyShapeStyle(fillPaint,s,rs,true); canvas.drawPath(path, fillPaint) }
                 canvas.drawPath(path, strokePaint)
@@ -445,12 +420,11 @@ class TileCache(
             is PolylineShape -> {
                 if (geo.points.size < 2) return
                 path.reset()
-                path.moveTo(geo.points[0].first*rs, (geo.points[0].second-topDu)*rs)
+                path.moveTo((geo.points[0].first - leftDu)*rs, (geo.points[0].second - topDu)*rs)
                 for (i in 1 until geo.points.size)
-                    path.lineTo(geo.points[i].first*rs, (geo.points[i].second-topDu)*rs)
+                    path.lineTo((geo.points[i].first - leftDu)*rs, (geo.points[i].second - topDu)*rs)
                 canvas.drawPath(path, strokePaint)
             }
         }
     }
-
 }

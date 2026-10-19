@@ -191,6 +191,19 @@
             android:textSize="14sp"
             android:visibility="gone" />
 
+        <!-- FAB torna alla pagina di origine -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabOriginPage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginBottom="72dp"
+            android:layout_marginEnd="16dp"
+            android:src="@drawable/ic_origin_page"
+            android:contentDescription="@string/action_origin_page"
+            android:visibility="gone"
+            app:fabSize="mini" />
+
         <!-- FAB salta a pagina -->
         <com.google.android.material.floatingactionbutton.FloatingActionButton
             android:id="@+id/fabJumpPage"

@@ -3,6 +3,7 @@
     <string name="app_name">Rnote Viewer</string>
     <string name="action_open">Apri file</string>
     <string name="action_search">Cerca nel file</string>
+    <string name="action_origin_page">Pagina di origine</string>
     <string name="action_fonts">Gestisci font…</string>
     <string name="search_hint">Cerca nel documento…</string>
     <string name="regex_label">.*</string>

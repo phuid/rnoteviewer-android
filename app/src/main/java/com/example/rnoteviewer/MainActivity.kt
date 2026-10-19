@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
 
         binding.btnOpenFile.setOnClickListener { openFileLauncher.launch(arrayOf("*/*")) }
         binding.fabJumpPage.setOnClickListener { showJumpDialog() }
+        binding.fabOriginPage.setOnClickListener { binding.rnoteView.returnToOriginPage() }
 
         setupScrollbar()
         setupScrollListener()
@@ -94,9 +95,10 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        R.id.action_open   -> { openFileLauncher.launch(arrayOf("*/*")); true }
-        R.id.action_search -> { showSearchUI(); true }
-        R.id.action_fonts  -> {
+        R.id.action_open        -> { openFileLauncher.launch(arrayOf("*/*")); true }
+        R.id.action_origin_page -> { binding.rnoteView.returnToOriginPage(); true }
+        R.id.action_search      -> { showSearchUI(); true }
+        R.id.action_fonts       -> {
             FontsDialogFragment.newInstance().show(supportFragmentManager, FontsDialogFragment.TAG)
             true
         }
@@ -303,6 +305,7 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
                     binding.tvLoading.visibility        = View.VISIBLE
                     binding.scrollbarContainer.visibility = View.GONE
                     binding.fabJumpPage.visibility      = View.GONE
+                    binding.fabOriginPage.visibility    = View.GONE
                 }
                 is LoadState.Success -> {
                     binding.progressBar.visibility      = View.GONE
@@ -311,6 +314,7 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
                     binding.rnoteView.visibility        = View.VISIBLE
                     binding.scrollbarContainer.visibility = View.VISIBLE
                     binding.fabJumpPage.visibility      = View.VISIBLE
+                    binding.fabOriginPage.visibility    = View.VISIBLE
 
                     currentDocument = state.doc
                     totalPages = (state.doc.totalHeight / state.doc.pageHeight)
@@ -342,6 +346,7 @@ class MainActivity : AppCompatActivity(), FontPickerHost {
         binding.tvLoading.visibility        = View.GONE
         binding.scrollbarContainer.visibility = View.GONE
         binding.fabJumpPage.visibility      = View.GONE
+        binding.fabOriginPage.visibility    = View.GONE
         supportActionBar?.title             = getString(R.string.app_name)
     }
 
